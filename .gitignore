@@ -1,0 +1,17 @@
+# R / RStudio
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.Renviron
+
+# data and outputs (tens of GB; regenerate with 4_scripts, see README)
+1_raw_data/*
+2_processed_data/*
+5_outputs/*
+!1_raw_data/.gitkeep
+!2_processed_data/.gitkeep
+!5_outputs/.gitkeep
+
+# user-added species (local)
+3_metadata/species_parameters_user.csv
