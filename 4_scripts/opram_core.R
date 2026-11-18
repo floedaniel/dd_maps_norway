@@ -15,14 +15,20 @@
 # ---- parameters -------------------------------------------------------------------------
 nullna <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) NULL else x
 
+# upper: optional upper development threshold (horizontal cutoff: no extra development above it).
+# emergence_only: the degree-day sum covers only part of the life cycle (e.g. overwintered larvae
+#   to adult); generation counts are then not meaningful (used by the app, not by the model).
 opram_params <- function(T0, threshold, diapause_daylength = NULL, diapause_temperature = NULL,
-                         method = c("sine", "triangle", "average"), maxYears = 4L, name = NA_character_) {
-  method <- match.arg(method)
+                         method = c("sine", "triangle", "average"), maxYears = 4L, name = NA_character_,
+                         upper = NULL, emergence_only = FALSE) {
+  method <- if (is.null(nullna(method))) "sine" else match.arg(method, c("sine", "triangle", "average"))
   stopifnot(is.numeric(T0), is.numeric(threshold), threshold > 0, maxYears >= 1)
-  dl <- nullna(diapause_daylength); dt <- nullna(diapause_temperature)
+  dl <- nullna(diapause_daylength); dt <- nullna(diapause_temperature); up <- nullna(upper)
   if (!is.null(dt) && is.null(dl)) stop("diapause_temperature requires diapause_daylength")
+  if (!is.null(up) && up <= T0) stop("upper threshold must be above T0")
   list(name = name, T0 = T0, threshold = threshold, diapause_daylength = dl,
-       diapause_temperature = dt, method = method, maxYears = as.integer(maxYears))
+       diapause_temperature = dt, method = method, maxYears = as.integer(maxYears),
+       upper = up, emergence_only = isTRUE(as.logical(emergence_only)))
 }
 
 # species presets from OPRAM data/species_parameters.csv -> list of opram_params
@@ -30,7 +36,7 @@ opram_species <- function(file, method = "sine", maxYears = 4L) {
   s <- read.csv(file, check.names = FALSE)
   setNames(lapply(seq_len(nrow(s)), function(i) with(s[i, ], opram_params(
     baseline_temperature, threshold, diapause_daylength, diapause_temperature,
-    method, maxYears, species))), s$species)
+    method, maxYears, species))), s$species)        # OPRAM presets: no upper threshold, full life cycle
 }
 
 # ---- degree-day methods (OPRAM: average_/triangle_/sine_degreeday) ------------------------
@@ -75,7 +81,12 @@ degree_days <- function(tn, tx, p, doy, lat = NULL, swap = TRUE) {
   }
   upd[is.na(upd)] <- FALSE
   f <- switch(p$method, sine = dd_sine, triangle = dd_triangle, average = dd_average)
-  dd <- array(0, dim(tn)); i <- which(upd); dd[i] <- f(tn[i], tx[i], p$T0); dd
+  dd <- array(0, dim(tn)); i <- which(upd); dd[i] <- f(tn[i], tx[i], p$T0)
+  if (!is.null(p$upper)) {   # horizontal cutoff: subtract the degree-days above the upper threshold
+    above <- upd & (if (p$method == "average") tn + tx > 2 * p$upper else tx > p$upper)
+    j <- which(above); dd[j] <- dd[j] - f(tn[j], tx[j], p$upper)
+  }
+  dd
 }
 
 # ---- emergence (OPRAM: emergence / location_loop) -----------------------------------------

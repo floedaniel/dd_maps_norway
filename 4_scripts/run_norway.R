@@ -74,7 +74,7 @@ opram_norway <- function(years, params, workers = 10, block_cells = 10000, overw
   gr <- readRDS(file.path(sn_proc, "grid.rds")); nms <- vapply(params, set_name, "")
   if (anyDuplicated(nms)) stop("duplicate parameter-set names: ", paste(nms[duplicated(nms)], collapse = ", "))
   # parameters changed since the maps were made (e.g. a corrected user species)? -> drop old maps, redo all
-  key <- function(p) p[c("T0", "threshold", "diapause_daylength", "diapause_temperature", "method", "maxYears")]
+  key <- function(p) p[c("T0", "threshold", "diapause_daylength", "diapause_temperature", "method", "maxYears", "upper")]
   for (j in seq_along(params)) {
     pf <- file.path(opram_out, nms[j], "params.rds")
     if (file.exists(pf) && !identical(key(readRDS(pf)), key(params[[j]]))) {
@@ -146,19 +146,44 @@ opram_probability <- function(name, years = 1991:2020, k = c(1, 2)) {
   invisible(nm)
 }
 
+# reference periods for normals, anomalies and probability maps: standard normal + recent 15 years
+opram_periods <- list(standard = 1991:2020, recent = 2008:2022)
+
+# normals + probability maps for every reference period fully covered by computed years
+opram_summaries <- function(name, maxYears = 4L, have = NULL) {
+  nm <- slug(name)
+  if (is.null(have)) have <- as.integer(sub(".*_(\\d{4})_ngen\\.tif$", "\\1",
+                                            list.files(file.path(opram_out, nm), "_\\d{4}_ngen\\.tif$")))
+  for (pr in opram_periods) if (all(pr %in% have)) {
+    message(sprintf("STAGE normals + probability %d-%d", min(pr), max(pr)))
+    opram_normals(name, pr, maxYears); opram_probability(name, pr)
+  }
+}
+
+# one compute job per species at a time (lock file holds the PID; stale locks are ignored)
+pid_alive <- function(pid) {
+  out <- suppressWarnings(system2("tasklist", c("/FI", shQuote(sprintf("PID eq %d", pid)), "/NH"), stdout = TRUE))
+  any(grepl(sprintf("\\b%d\\b", pid), out))
+}
+job_lock <- function(name) file.path(opram_out, "_jobs", paste0(slug(name), ".lock"))
+job_running <- function(name) {
+  f <- job_lock(name); if (!file.exists(f)) return(FALSE)
+  pid <- suppressWarnings(as.integer(readLines(f, warn = FALSE)[1])); !is.na(pid) && pid_alive(pid)
+}
+
 # compute one species from the species table (OPRAM presets + 3_metadata/species_parameters_user.csv);
-# used by the app's "Compute" button (runs in a background R process via callr).
+# used by the app's "Compute maps" button (runs in a background R process via callr).
 opram_compute_species <- function(name, years, workers = 6L, block_cells = 5000L) {
   source("4_scripts/species_db.R", local = TRUE)
   df <- sp_read_all("."); df <- df[df$species == name, , drop = FALSE]
   if (nrow(df) != 1) stop("species not found: ", name)
+  if (job_running(name)) stop("a compute job for ", name, " is already running")
+  dir.create(dirname(job_lock(name)), FALSE, TRUE); writeLines(as.character(Sys.getpid()), job_lock(name))
+  on.exit(unlink(job_lock(name)), add = TRUE)
   p <- sp_params(df)[[1]]
   message(sprintf("STAGE model %s %d-%d", name, min(years), max(years)))
   opram_norway(years, p, workers = workers, block_cells = block_cells)
-  if (all(1991:2020 %in% years)) {
-    message("STAGE normals"); opram_normals(name, 1991:2020, p$maxYears)
-    message("STAGE probability"); opram_probability(name, 1991:2020)
-  }
+  opram_summaries(name, p$maxYears)
   message("STAGE done")
   invisible(set_name(p))
 }

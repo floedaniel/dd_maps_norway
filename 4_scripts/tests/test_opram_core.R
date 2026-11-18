@@ -68,6 +68,30 @@ test_that("degree-day methods match known values", {
   }
 })
 
+test_that("upper threshold = horizontal cutoff, checked by numerical integration", {
+  t <- (seq_len(20000) - 0.5) / 20000
+  sine_T <- function(tn, tx) (tn + tx) / 2 + (tx - tn) / 2 * sin(2 * pi * t)
+  tri_T  <- function(tn, tx) tn + (tx - tn) * (1 - abs(2 * t - 1))
+  for (v in list(c(5, 30), c(14, 26), c(18, 24), c(2, 12), c(-3, 9))) {
+    for (m in c("sine", "triangle", "average")) {
+      p <- opram_params(10, 100, method = m, upper = 21.7)
+      got <- degree_days(matrix(v[1]), matrix(v[2]), p, doy = 1)[1, 1]
+      ref <- switch(m,
+        sine     = mean(pmin(pmax(sine_T(v[1], v[2]) - 10, 0), 11.7)),
+        triangle = mean(pmin(pmax(tri_T(v[1], v[2]) - 10, 0), 11.7)),
+        average  = min(max(mean(v) - 10, 0), 11.7))
+      expect_equal(got, ref, tolerance = 1e-4, info = paste(m, v[1], v[2]))
+    }
+  }
+  # no upper threshold -> identical to before; upper never reached -> no change
+  p0 <- opram_params(10, 100); p1 <- opram_params(10, 100, upper = 40)
+  tn <- matrix(c(5, 8, 12), 3); tx <- matrix(c(20, 25, 30), 3)
+  expect_equal(degree_days(tn, tx, p0, 1:3), degree_days(tn, tx, p1, 1:3))
+  expect_error(opram_params(10, 100, upper = 9), "above T0")
+  expect_true(opram_params(10, 100, emergence_only = TRUE)$emergence_only)
+  expect_equal(opram_params(10, 100, method = NA)$method, "sine")
+})
+
 test_that("daylength matches geosphere::daylength, incl. polar day/night", {
   skip_if_not_installed("geosphere")
   # DOY 366 excluded: geosphere wraps it to DOY 1, OPRAM (Julia) uses the raw formula

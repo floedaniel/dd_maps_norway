@@ -17,12 +17,21 @@
 /* species table: compact, readable long text */
 .dd-species table { font-size: 13px; }
 .dd-species td { vertical-align: top; }
-.dd-species td:nth-child(3) { min-width: 14rem; max-width: 22rem; }   /* Event */
+.dd-species td:nth-child(3) { min-width: 10rem; max-width: 17rem; }   /* Event */
 .dd-species .card-body { overflow-x: auto; }
-.dd-species td:nth-child(9) { min-width: 12rem; word-break: break-all; }  /* References: long DOIs wrap */
-.dd-species td:nth-child(2) { min-width: 7rem; }                          /* Common name */
+.dd-species td:nth-child(10) { min-width: 8rem; word-break: break-all; } /* References: long DOIs wrap */
+.dd-species td:nth-child(9) { min-width: 8rem; }                        /* Diapause */
+.dd-species td:nth-child(8) { white-space: nowrap; }                    /* Covers */
+.dd-species td:nth-child(2) { min-width: 6rem; }                          /* Common name */
 .dd-badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 12px; font-weight: 600;
             background: #EAF1FD; color: #2160D6; }
 
 /* card titles carry the context: keep them quiet but legible */
 .card-header { font-size: 14px; }
+
+/* right column beside the map: cell table above, trend below */
+.dd-right { display: flex; flex-direction: column; gap: 16px; }
+.dd-trend .card-header { font-weight: 600; }
+
+/* quiet notice in the sidebar (e.g. emergence-only species) */
+.dd-note { font-size: 13px; color: #2B2F36; background: #EAF1FD; border-radius: 6px; padding: 8px 10px; margin-top: 4px; }

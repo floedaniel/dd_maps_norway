@@ -2,7 +2,7 @@
 #  1. re-extract 1991-2025 TN/TX into the .bin store from 1_raw_data/senorge_archive (all v23.09)
 #  2. move the raw yearly files to ARCHIVE_DEST (OneDrive) once every .bin is verified
 #  3. recompute all species (OPRAM presets + user species) for 1991-2022 (fully observed 4-yr windows)
-#  4. 1991-2020 normals + probability maps
+#  4. normals + probability maps for both reference periods (1991-2020, 2008-2022)
 # Resumable per step. Run detached from project root:
 #   Start-Process Rscript -ArgumentList "4_scripts/run_v2309.R" -WindowStyle Hidden `
 #     -RedirectStandardOutput 5_outputs/logs/v2309.out -RedirectStandardError 5_outputs/logs/v2309.err
@@ -51,7 +51,7 @@ say("model done (", length(sp), " sets x 1991-2022): ", round(difftime(Sys.time(
 
 # 4. normals + probabilities (parallel over species)
 t2 <- Sys.time(); plan(multisession, workers = 6)
-r <- future_lapply(sp, function(p) tryCatch({ opram_normals(p$name, 1991:2020, p$maxYears)
-  opram_probability(p$name, 1991:2020); "ok" }, error = function(e) conditionMessage(e)), future.packages = "terra")
+r <- future_lapply(sp, function(p) tryCatch({ opram_summaries(p$name, p$maxYears, have = 1991:2022); "ok" },
+  error = function(e) conditionMessage(e)), future.packages = "terra")      # 1991-2020 and 2008-2022
 say("normals + probabilities: ", paste(names(table(unlist(r))), table(unlist(r)), collapse = "; "), " in ",
     round(difftime(Sys.time(), t2, units = "mins"), 1), " min; total ", round(difftime(Sys.time(), t0, units = "mins"), 1), " min")
