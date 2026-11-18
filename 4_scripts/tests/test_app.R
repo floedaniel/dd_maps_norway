@@ -18,10 +18,10 @@ test_that("maps, reference periods, trend and point model render", {
     session$setInputs(view = "p1")                                               # probability maps (0-100 %)
     v <- mapdf()$v; expect_true(all(v >= 0 & v <= 100, na.rm = TRUE)); expect_gt(max(v, na.rm = TRUE), 50)
     expect_match(output$maptitle, "probability of ≥1 generation")
-    expect_match(output$cellinfo, "P≥1")
+    expect_match(output$cellinfo, ">Years<"); expect_match(output$cellinfo, "title=")
     session$setInputs(period = "2008_2022")                                      # recent reference period
     expect_match(output$maptitle, "2008"); expect_match(output$maptitle, "2022"); expect_gt(sum(!is.na(mapdf()$v)), 1e5)
-    expect_match(output$cellnote, "2008"); expect_match(output$cellnote, "median")
+    expect_match(output$cellnote$html, "2008"); expect_match(output$cellnote$html, "median")
     session$setInputs(view = "p2"); expect_match(output$map$src, "^data:image/png")
     session$setInputs(set = "test_t10_dd300", view = "p1")
     expect_error(layer(), "No probability maps")                                 # set without a full period
@@ -48,7 +48,7 @@ test_that("emergence-only species hide generation counts", {
     session$setInputs(set = "popillia_japonica", year = "2010", month = "start_Jan", var = "emerge",
                       view = "year", period = "1991_2020", map_click = list(x = 262000, y = 6650000))
     expect_true(emonly()); expect_gt(sum(!is.na(mapdf()$v)), 1e4)
-    expect_false(grepl("<th[^>]*> Gen </th>", output$cellinfo))                 # no generation column
+    expect_false(grepl(">Gen.<", output$cellinfo, fixed = TRUE))              # no generation column
     session$setInputs(var = "ngen"); expect_error(layer(), "emergence only")
     session$setInputs(var = "emerge", view = "p2"); expect_error(layer(), "emergence only")
   })

@@ -121,12 +121,14 @@ ui <- page(
       div(class = "dd-right",
         card(card_header(textOutput("cellhead")), class = "dd-cell",
              tableOutput("cellinfo"),
-             card_footer(class = "small text-muted", textOutput("cellnote"))),
+             card_footer(class = "small", uiOutput("cellnote"))),
         card(card_header(textOutput("trendhead")), class = "dd-trend",
              plotOutput("trend", height = "300px")))))),
   nav_panel("Point model", layout_sidebar(
     sidebar = sidebar(width = 320,
-      selectInput("preset", "Preset", c("Custom", sp_read_all(root)$species), "Ips typographus"),
+      selectInput("preset", "Species", c("Custom", sp_read_all(root)$species), "Ips typographus"),
+      fluidRow(column(6, numericInput("lat", "Latitude", 59.91, step = 0.01)), column(6, numericInput("lon", "Longitude", 10.75, step = 0.01))),
+      helpText("The model runs for this one place (its 1 km cell). Or click a cell on the Maps tab."),
       numericInput("T0", "Lower threshold T0 (°C)", 8.3, step = 0.1),
       numericInput("thr", "Degree-days required (°C·days)", 557, min = 1),
       checkboxInput("dia", "Diapause (photoperiod)", TRUE),
@@ -139,8 +141,6 @@ ui <- page(
       sliderInput("maxY", "Years allowed for development", 1, 4, 4, step = 1),
       selectInput("pyear", "Year", NULL),
       selectInput("pmonth", "Development starts", setNames(1:12, paste("1", month.name))),
-      fluidRow(column(6, numericInput("lat", "Latitude", 59.91, step = 0.01)), column(6, numericInput("lon", "Longitude", 10.75, step = 0.01))),
-      helpText("Or click a cell on the Maps tab."),
       actionButton("go", "Run model", class = "btn-primary")),
     card(card_header(textOutput("ptitle")), plotOutput("cumplot", height = "330px"), plotOutput("tplot", height = "260px")),
     card(card_header("Results for all start months"), tableOutput("ptable")))),
@@ -413,19 +413,34 @@ server <- function(input, output, session) {
     req(input$set, input$year); i <- landmap[cell()]; req(!is.na(i))
     d <- file.path(outd, input$set); tag <- sprintf("%s_%s", input$set, input$year)
     e <- unlist(rast(file.path(d, paste0(tag, "_emerge.tif")))[cell()]); g <- unlist(rast(file.path(d, paste0(tag, "_ngen.tif")))[cell()])
+    per <- period_lab(input$period)
+    hdr <- function(lab, tip) sprintf("<abbr title='%s' class='dd-abbr'>%s</abbr>", tip, lab)   # header with hover help
     out <- data.frame(Start = month.abb, Emerges = short_lab(as.integer(input$year))(e), Gen = sprintf("%.2f", g))
-    if (emonly()) out$Gen <- NULL
+    names(out) <- c(hdr("Start", "Development starts on the 1st of this month"),
+                    hdr("Adults", sprintf("Date the first generation's adults emerge (+1y = the following year)")),
+                    hdr("Gen.", sprintf("Generations completed in %s (fraction = the last, unfinished one)", input$year)))
+    if (emonly()) out[[3]] <- NULL
     nt <- set_normal(input$set, input$period)
     if (!is.na(nt)) { en <- unlist(rast(paste0(nt, "_emerge.tif"))[cell()])
-      out[["Δd"]] <- ifelse(is.na(e - en), "–", sprintf("%+.0f", e - en)) }
+      out[[hdr("±days", sprintf("Days earlier (minus) or later (plus) than the %s median emergence at this cell", per))]] <-
+        ifelse(is.na(e - en), "–", sprintf("%+.0f", e - en)) }
     fp <- set_prob(input$set, 1, input$period)
-    if (!is.na(fp)) out[["P≥1"]] <- sprintf("%.0f%%", 100 * unlist(rast(fp)[cell()]))
+    if (!is.na(fp)) out[[hdr("Years", sprintf("Share of the years %s with at least one %s", per,
+                                                 if (emonly()) "emergence in the same season" else "complete generation"))]] <-
+      sprintf("%.0f%%", 100 * unlist(rast(fp)[cell()]))
     out
-  }, striped = TRUE, spacing = "xs", width = "100%")
+  }, striped = TRUE, spacing = "xs", width = "100%", sanitize.colnames.function = identity)
 
-  output$cellnote <- renderText({ per <- period_lab(input$period)
-    sprintf("Δd: days earlier (−) or later (+) than the %s median. P≥1: share of years %s with at least one %s.",
-            per, per, if (emonly()) "emergence in the same season" else "generation") })
+  output$cellnote <- renderUI({ per <- period_lab(input$period)
+    tags$dl(class = "dd-legend",
+      tags$dt("±days"),
+      tags$dd(sprintf("How much earlier (minus) or later (plus) adults emerge in %s than in a normal year (the %s median) at this cell. ",
+                      input$year, per), "Example: −10 = ten days earlier than usual."),
+      tags$dt("Years"),
+      tags$dd(sprintf("In how many of the years %s %s by 31 December, for that start month. ", per,
+                      if (emonly()) "adults emerged in the same season" else "at least one generation was completed"),
+              "Example: 67% = two years out of three."),
+      tags$dd(class = "text-muted", "Hover over a column name for a short explanation.")) })
 
   # ---- trend at the selected cell: all computed years, selected start month ----
   trend_data <- reactive({

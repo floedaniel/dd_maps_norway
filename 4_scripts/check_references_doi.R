@@ -14,7 +14,7 @@
 
 suppressPackageStartupMessages({ library(jsonlite); library(openxlsx) })
 a <- commandArgs(TRUE)
-f_in  <- if (length(a)) a[1] else "C:/Users/dafl/Downloads/degree_day_parameters.xlsx"
+f_in  <- if (length(a)) a[1] else "1_raw_data/degree_day_parameters.xlsx"   # or pass the path as first argument
 f_out <- if (length(a) > 1) a[2] else sub("\\.xlsx$", "_with_doi.xlsx", f_in)
 cache_f <- "2_processed_data/doi_cache.rds"
 cache <- if (file.exists(cache_f)) readRDS(cache_f) else list()
