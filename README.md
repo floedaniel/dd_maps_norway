@@ -31,7 +31,11 @@ shiny::runApp("4_scripts/ddmaps_app")   # from the project root
 - **Maps**: species × year × start month; emergence date or generations; selected year, median or anomaly
   for a reference period, or probability of ≥1/≥2 generations. Click a 1 km cell for its monthly values
   and a 1991–2022 trend (with change per decade).
-- **Point model**: live run for one location with preset or custom parameters (method, upper threshold, diapause).
+  The side table per start month: **Adults** (emergence date, "+1y" = following year), **Gen.** (generations
+  that year), **±days** (days earlier (−) or later (+) than the reference-period median), **Years** (share of
+  reference-period years with at least one generation by 31 December). Column names have hover help.
+- **Point model**: live run for one place (its 1 km cell; latitude/longitude under the species, or click the
+  map) with preset or custom parameters (method, upper threshold, diapause).
 - **Species**: parameter table with references; add your own species and compute maps for them in the
   background (one job per species at a time); delete user species, optionally with their maps.
 
@@ -49,6 +53,9 @@ shiny::runApp("4_scripts/ddmaps_app")   # from the project root
 | `4_scripts/species_db.R` | Species table: OPRAM presets + user species (`3_metadata/species_parameters_user.csv`) |
 | `4_scripts/check_references_doi.R` | Find and verify DOIs for every reference in a degree-day parameter spreadsheet (Crossref/DataCite; author + year + species-in-title) |
 | `4_scripts/extract_pdf_text.R` | Extract text from downloaded source papers (`1_raw_data/dd_pdf`) for checking parameter values |
+
+Source papers are kept as `1_raw_data/dd_pdf/Author_Year_short_title.pdf` (not in the repository); `_renamed.csv`
+in that folder lists the original file names with DOI or source.
 | `4_scripts/tests/` | `testthat` tests: model vs. a literal port of the original algorithm, cutoff vs. numerical integration, app workflow |
 
 Setup:
