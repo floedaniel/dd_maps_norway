@@ -33,15 +33,17 @@ shiny::runApp("4_scripts/ddmaps_app")   # from the project root
 | `4_scripts/prep_norway_mask.R` | Norway mask and borders (GADM 4.1, downloaded via `geodata`) |
 | `4_scripts/opram_core.R` | Model: degree-days, diapause, emergence, generations, normals |
 | `4_scripts/run_norway.R` | Parallel run over all land cells; writes GeoTIFFs to `5_outputs/opram/` |
-| `4_scripts/run_1991_2020.R` | Full batch: extract 1991–2021, all species 1991–2020, 30-yr normals |
+| `4_scripts/download_senorge.R` | Download yearly seNorge v23.09 files from MET Norway's THREDDS archive (resumable) |
+| `4_scripts/run_v2309.R` | Full batch: extract 1991–2025, all species 1991–2022, 30-yr normals + probability maps |
+| `4_scripts/run_1991_2020.R` | Earlier batch on the long single-variable files (superseded by `run_v2309.R`) |
 | `4_scripts/species_db.R` | Species table (presets + user-added species) |
 | `4_scripts/tests/` | `testthat` tests: model vs. a literal port of the original algorithm, app workflow |
 
 Setup:
 
-1. Download seNorge2018 daily TN and TX NetCDF (MET Norway) and set their folder in a `.Renviron`
-   file in the project root: `SENORGE_DIR="path/to/seNorge"`.
-2. `Rscript 4_scripts/extract_senorge.R 2010 2011 2012 2013` (or run `4_scripts/run_1991_2020.R`).
+1. `Rscript 4_scripts/download_senorge.R` (yearly seNorge files, ~75 GB for 1991–2025). Optional `.Renviron`
+   in the project root: `SENORGE_ARCHIVE_DIR="path/to/files"`.
+2. `Rscript 4_scripts/extract_senorge.R 2010 2011 2012 2013`, or `4_scripts/run_v2309.R` for the full pipeline.
 3. `Rscript 4_scripts/prep_norway_mask.R`
 4. `Rscript 4_scripts/run_norway.R 2010`, then start the app.
 
@@ -50,8 +52,10 @@ matrixStats, ggplot2, shiny, bslib, callr, geodata, testthat.
 
 ## Data
 
-- Climate: seNorge_2018 daily minimum/maximum temperature, MET Norway
-  (Lussana et al. 2019, *Earth Syst. Sci. Data* 11:1531), CC BY 4.0 / NLOD.
+- Climate: seNorge_2018 v23.09 daily minimum/maximum temperature, MET Norway
+  (Lussana et al. 2019, *Earth Syst. Sci. Data* 11:1531), CC BY 4.0 / NLOD. Yearly files from the
+  [THREDDS archive](https://thredds.met.no/thredds/catalog/senorge/seNorge_2018/Archive/catalog.html);
+  download with `4_scripts/download_senorge.R`. Weather 1991–2025, maps 1991–2022.
 - Boundaries: GADM 4.1 (gadm.org), downloaded at run time; not redistributed here.
 
 ## Acknowledgements and license
@@ -59,7 +63,7 @@ matrixStats, ggplot2, shiny, bslib, callr, geodata, testthat.
 The model is an R port of **OPRAM** by Jon Yearsley
 ([github.com/DrJonYearsley/OPRAM](https://github.com/DrJonYearsley/OPRAM), GPL-3), the model behind
 [pestmaps.ie](https://www.pestmaps.ie). The species presets in `3_metadata/species_parameters_OPRAM.csv`
-come from that repository. Differences: the port matches OPRAM with `save1year = false`; days with
-Tmax < Tmin are swapped.
+come from that repository. Differences: the port matches OPRAM with `save1year = false`; any day with Tmax < Tmin would be
+swapped (none occur in seNorge v23.09).
 
 This project is licensed under the GNU General Public License v3.0 (see `LICENSE`).

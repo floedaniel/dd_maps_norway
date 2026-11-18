@@ -41,18 +41,20 @@ species_tbl <- function(s) {
   refs <- apply(matrix(sapply(c("Reference1", "Reference2", "Reference3"), function(k) link(s[[k]])), nrow(s)), 1,
                 function(r) paste(r[nzchar(r)], collapse = "<br>"))
   num <- function(x, d = 1) ifelse(is.na(x), "–", formatC(x, format = "f", digits = d, drop0trailing = TRUE))
-  data.frame(Species = sprintf("<i>%s</i>", esc(s$species)), `Common name` = esc(s$commonName),
+  data.frame(Species = paste0(sprintf("<i>%s</i>", esc(s$species)),
+                             ifelse(s$source == "user", " <span class='dd-badge'>user</span>", "")),
+             `Common name` = esc(s$commonName),
              Event = esc(s$event), `T0 (°C)` = num(s$baseline_temperature, 2),
-             `Threshold (DD)` = num(s$threshold, 2), Diapause = ifelse(is.na(s$diapause), "–", esc(s$diapause)),
+             `Degree-days` = num(s$threshold, 2), Diapause = ifelse(is.na(s$diapause), "–", esc(s$diapause)),
              `Daylength (h)` = num(s$diapause_daylength), `Temp. (°C)` = num(s$diapause_temperature),
-             References = refs, Source = ifelse(s$source == "user", "<span class='badge bg-info'>user</span>", "OPRAM"),
-             check.names = FALSE)
+             References = refs, check.names = FALSE)
 }
-last_meteo <- 2021L
+last_meteo <- 2025L
 slug <- function(x) gsub("[^a-z0-9]+", "_", tolower(trimws(x)))
 by <- function(v) sub("^(tn|tx)_(\\d+)\\.bin$", "\\2", list.files(file.path(proc, "bin"), sprintf("^%s_\\d+\\.bin$", v)))
 met_years <- sort(as.integer(intersect(by("tn"), by("tx"))))
-sim_years <- function(mY) met_years[vapply(met_years, function(y) all(opram_years(y, mY, last_meteo) %in% met_years), TRUE)]
+# simulation years whose whole window is observed (no padding with repeated weather)
+sim_years <- function(mY) met_years[vapply(met_years, function(y) y + mY - 1 <= last_meteo && all((y:(y + mY - 1)) %in% met_years), TRUE)]
 
 result_sets <- function() {
   d <- list.dirs(outd, FALSE, FALSE)
@@ -62,6 +64,8 @@ set_label <- function(d, nms) { n <- nms[slug(nms) == d]; if (length(n)) n[1] el
 set_years <- function(d) sort(unique(sub(".*_(\\d{4})_emerge\\.tif$", "\\1",
                                          list.files(file.path(outd, d), "_\\d{4}_emerge\\.tif$"))))
 set_normal <- function(d) sub("_emerge\\.tif$", "", list.files(file.path(outd, d), "_normal_\\d+_\\d+_emerge\\.tif$"))[1]
+set_prob <- function(d, k) list.files(file.path(outd, d), sprintf("_prob_\\d+_\\d+_ngen_ge%d\\.tif$", k), full.names = TRUE)[1]
+prob_period <- function(f) sub(".*_prob_(\\d+)_(\\d+)_.*", "\\1\u2013\\2", f)
 
 day_lab <- function(y, fmt = "%d %b %Y") function(v) ifelse(is.na(v), "", format(as.Date(sprintf("%d-01-01", y)) + v - 1, fmt))
 short_lab <- function(y) function(v) {                             # "07 Jul", "12 Jun +1y"
@@ -71,76 +75,136 @@ short_lab <- function(y) function(v) {                             # "07 Jul", "
 xy_of <- function(lon, lat) crds(project(vect(cbind(lon, lat), crs = "EPSG:4326"), gr$crs))
 
 # ---------------------------------------------------------------------------------------- UI
-ui <- page_navbar(
-  title = tags$span("DD-maps Norway", tags$small(class = "ms-2 opacity-75", "degree-day pest phenology")),
-  window_title = "DD-maps Norway", theme = bs_theme(version = 5, bootswatch = "flatly"),
+source(file.path(root, "4_scripts/ddmaps_app/R/theme.R"), local = TRUE)   # shared VKM / FinnPRIO look
+ui <- page(
+  title = "DD-maps Norway", theme = hm_theme(),
+  tags$head(tags$link(rel = "stylesheet", href = "ddmaps.css")),
+  vkm_header("DD-maps Norway", "Degree-day pest phenology maps for Norway, 1 km"),
+  div(class = "vkm-navbar", navset_bar(id = "tabs", fillable = FALSE,
   nav_panel("Maps", layout_sidebar(
     sidebar = sidebar(width = 300,
       selectInput("set", "Species / parameter set", NULL),
       selectInput("year", "Year", NULL),
       selectInput("month", "Development starts", setNames(paste0("start_", month.abb), paste("1", month.name))),
       radioButtons("var", "Show", c("Adult emergence date" = "emerge", "Generations per year" = "ngen")),
-      radioButtons("view", "Values", c("Selected year" = "year", "30-yr median" = "normal", "Anomaly (year - median)" = "anom")),
-      helpText("Click the map to inspect a 1 km cell; the cell is also used for the point model."),
-      tags$small("Degree-day model ported from OPRAM (J. Yearsley, GPL-3). Climate: seNorge_2018, MET Norway. Borders: GADM 4.1.")),
-    layout_columns(col_widths = c(9, 3), fill = TRUE,
+      radioButtons("view", "Values", c("Selected year" = "year", "30-yr median" = "normal", "Anomaly (year - median)" = "anom",
+                                       "Probability: ≥1 generation" = "p1", "Probability: ≥2 generations" = "p2")),
+      conditionalPanel("input.view == 'p1' || input.view == 'p2'",
+        helpText("Share of years 1991–2020 in which the generation(s) complete within the calendar year.",
+                 "For 'emergence only' species, ≥1 = adults emerge in the same season. 'Show' is ignored.")),
+      helpText("Click the map to inspect a 1 km cell. The same cell is used in the point model.")),
+    layout_columns(col_widths = c(8, 4), fill = TRUE,
       card(full_screen = TRUE, card_header(textOutput("maptitle")),
-           plotOutput("map", height = "780px", click = "map_click")),
-      card(card_header(textOutput("cellhead")), class = "small",
-           tableOutput("cellinfo"))))),
+           plotOutput("map", height = "780px", click = "map_click"),
+           card_footer(class = "small text-muted",
+             "Climate: seNorge_2018 daily Tmin/Tmax, 1 km, © MET Norway (CC BY 4.0). ",
+             "Borders: GADM 4.1. Details under About.")),
+      card(card_header(textOutput("cellhead")), class = "dd-cell",
+           tableOutput("cellinfo"),
+           card_footer(class = "small text-muted", "Δd: days earlier (−) or later (+) than the 1991–2020 median. ",
+                       "P≥1: share of years 1991–2020 with at least one generation."))))),
   nav_panel("Point model", layout_sidebar(
     sidebar = sidebar(width = 320,
       selectInput("preset", "Preset", c("Custom", sp_read_all(root)$species), "Ips typographus"),
-      numericInput("T0", "Base temperature T0 (°C)", 8.3, step = 0.1),
-      numericInput("thr", "Threshold (degree-days)", 557, min = 1),
+      numericInput("T0", "Lower threshold T0 (°C)", 8.3, step = 0.1),
+      numericInput("thr", "Degree-days required (°C·days)", 557, min = 1),
       checkboxInput("dia", "Diapause (photoperiod)", TRUE),
       conditionalPanel("input.dia", numericInput("dial", "Diapause daylength (h)", 14.5, step = 0.1),
-                       checkboxInput("diat_on", "Also require mean temp ≤", TRUE),
+                       checkboxInput("diat_on", "Only on days with mean temperature at or below", TRUE),
                        conditionalPanel("input.diat_on", numericInput("diat", "Diapause temperature (°C)", 14.5, step = 0.1))),
       selectInput("method", "Degree-day method", c("sine", "triangle", "average")),
-      sliderInput("maxY", "maxYears", 1, 4, 4, step = 1),
+      sliderInput("maxY", "Years allowed for development", 1, 4, 4, step = 1),
       selectInput("pyear", "Year", NULL),
       selectInput("pmonth", "Development starts", setNames(1:12, paste("1", month.name))),
-      fluidRow(column(6, numericInput("lat", "Lat", 59.91, step = 0.01)), column(6, numericInput("lon", "Lon", 10.75, step = 0.01))),
+      fluidRow(column(6, numericInput("lat", "Latitude", 59.91, step = 0.01)), column(6, numericInput("lon", "Longitude", 10.75, step = 0.01))),
+      helpText("Or click a cell on the Maps tab."),
       actionButton("go", "Run model", class = "btn-primary")),
     card(card_header(textOutput("ptitle")), plotOutput("cumplot", height = "330px"), plotOutput("tplot", height = "260px")),
     card(card_header("Results for all start months"), tableOutput("ptable")))),
   nav_panel("Species", layout_sidebar(
     sidebar = sidebar(width = 340, open = "always",
       accordion(id = "sp_acc", open = "Add a species",
-        accordion_panel("Add a species", icon = icon("plus"),
+        accordion_panel("Add a species",
           textInput("sp_name", "Species (scientific name) *"),
           textInput("sp_common", "Common name"),
           textInput("sp_event", "Life stage / event", placeholder = "e.g. Egg to adult"),
-          fluidRow(column(6, numericInput("sp_T0", "T0 (°C) *", NA, step = 0.1)),
-                   column(6, numericInput("sp_thr", "Threshold (DD) *", NA, min = 1))),
+          fluidRow(column(6, numericInput("sp_T0", "Lower threshold T0 (°C) *", NA, step = 0.1)),
+                   column(6, numericInput("sp_thr", "Degree-days required (°C·days) *", NA, min = 1))),
+          helpText("T0: temperature below which no development occurs (often 8-15 °C).",
+                   "Degree-days: heat sum from start of development to adult emergence (typically 60-1500).",
+                   "An upper temperature threshold is not used by this model."),
           selectInput("sp_dtype", "Diapause type (label only)", c("", "facultative", "obligate", "quiescence")),
           fluidRow(column(6, numericInput("sp_dl", "Daylength (h)", NA, min = 0, max = 24, step = 0.1)),
                    column(6, numericInput("sp_dt", "Temp. (°C)", NA, step = 0.1))),
           helpText("Leave daylength empty for no diapause. A temperature requires a daylength."),
           textInput("sp_ref1", "Reference 1", placeholder = "https://doi.org/..."),
           textInput("sp_ref2", "Reference 2"), textInput("sp_ref3", "Reference 3"),
-          actionButton("sp_add", "Save species", class = "btn-primary", icon = icon("floppy-disk"))),
-        accordion_panel("Compute maps", icon = icon("play"),
+          actionButton("sp_add", "Save species", class = "btn-primary")),
+        accordion_panel("Compute maps",
           selectInput("cp_species", "Species", NULL),
           sliderInput("cp_years", "Years", 1991, 2020, c(2018, 2020), step = 1, sep = ""),
           numericInput("cp_workers", "Parallel workers", 6, min = 1, max = 14),
           helpText("All of Norway at 1 km: ~10-30 s per year with 6 workers. Runs in the background;",
                    "finished years are skipped. 30-yr normals are added when 1991-2020 is covered."),
-          actionButton("cp_go", "Compute", class = "btn-success", icon = icon("play")),
+          actionButton("cp_go", "Compute maps", class = "btn-primary"),
           uiOutput("cp_status")),
-        accordion_panel("Delete a user species", icon = icon("trash"),
+        accordion_panel("Delete a user species",
           selectInput("del_species", "User species", NULL),
           helpText("Removes the row from the table; computed maps stay in 5_outputs/opram."),
-          actionButton("del_go", "Delete", class = "btn-outline-danger")))),
-    card(card_header("Species parameters and references"),
+          actionButton("del_go", "Delete species", class = "btn-outline-secondary")))),
+    card(card_header("Species parameters and references"), class = "dd-species",
       tableOutput("sptable"),
       tags$small(class = "text-muted",
         "T0: base temperature for development; Threshold: degree-days from start of development to adult emergence. ",
         "Diapause: development stops after the first day (from DOY 150) when daylength falls below the given hours; ",
         "if a temperature is given, only on days with mean temperature at or below it. ",
-        "OPRAM rows: data/species_parameters.csv (J. Yearsley, GPL-3; one malformed DOI link repaired for display). ",
-        "User rows: 3_metadata/species_parameters_user.csv."))))
+        "Rows without a badge come from OPRAM data/species_parameters.csv (J. Yearsley, GPL-3; one malformed DOI link repaired for display). ",
+        "Rows marked user are your own (3_metadata/species_parameters_user.csv).")))),
+  nav_panel("About", layout_columns(col_widths = c(7, 5),
+    card(card_header("Climate data"),
+      tags$p(tags$b("seNorge_2018"), " daily minimum (TN) and maximum (TX) 2 m air temperature, ",
+             "Norwegian Meteorological Institute (MET Norway). An observational gridded dataset: station data from ",
+             "MET Norway, SMHI, FMI and ECA&D, spatially interpolated to a 1 km grid with automatic quality control."),
+      tags$table(class = "table table-sm small",
+        tags$tbody(
+          tags$tr(tags$th("Variables"), tags$td("TN daily minimum, TX daily maximum temperature (°C)")),
+          tags$tr(tags$th("Version"), tags$td("seNorge_2018 v23.09 for both TN and TX (yearly files from MET Norway's THREDDS archive)")),
+          tags$tr(tags$th("Grid"), tags$td("1 km, UTM zone 33N (1195 × 1550 cells); Norway land cells only in this app")),
+          tags$tr(tags$th("Day definition"), tags$td("18 UTC previous day to 18 UTC; labelled with the end date")),
+          tags$tr(tags$th("Period used"), tags$td("Weather 1991–2025; maps for 1991–2022, so every 4-year development window is observed weather")),
+          tags$tr(tags$th("License"), tags$td("CC BY 4.0 or NLOD; credit: “MET Norway”")))),
+      tags$p(tags$b("Please cite:")),
+      tags$ul(class = "small",
+        tags$li("Lussana, C., Tveito, O. E., Dobler, A. & Tunheim, K. (2019). seNorge_2018, daily precipitation, and ",
+                "temperature datasets over Norway. ", tags$i("Earth System Science Data"), " 11, 1531–1551. ",
+                tags$a(href = "https://doi.org/10.5194/essd-11-1531-2019", target = "_blank", "doi:10.5194/essd-11-1531-2019")),
+        tags$li("Lussana, C., Tveito, O. E. & Uboldi, F. (2018). Three-dimensional spatial interpolation of 2 m ",
+                "temperature over Norway. ", tags$i("Q. J. R. Meteorol. Soc."), " ",
+                tags$a(href = "https://doi.org/10.1002/qj.3208", target = "_blank", "doi:10.1002/qj.3208")),
+        tags$li("Data: MET Norway THREDDS archive, ",
+                tags$a(href = "https://thredds.met.no/thredds/catalog/senorge/seNorge_2018/Archive/catalog.html",
+                       target = "_blank", "senorge/seNorge_2018/Archive", .noWS = "outside"), ".")),
+      tags$p(tags$b("Processing in this app:"), class = "mb-1"),
+      tags$ul(class = "small",
+        tags$li("Values stored at 0.01 °C resolution (rounding error ≤ 0.005 °C)."),
+        tags$li("Leap days are included; a generation counts for the year if it completes by day 365."))),
+    card(card_header("Model, boundaries and limitations"),
+      tags$p(tags$b("Model: "), "degree-day phenology model ported to R from ",
+             tags$a(href = "https://github.com/DrJonYearsley/OPRAM", target = "_blank", "OPRAM", .noWS = "after"),
+             " (Jon Yearsley, GPL-3; the model behind ",
+             tags$a(href = "https://www.pestmaps.ie", target = "_blank", "pestmaps.ie", .noWS = "outside"), "). ",
+             "Daily degree-days from TN/TX (single-sine method by default) above a lower threshold T0; ",
+             "adult emergence when the degree-day sum is reached; optional photoperiod/temperature diapause."),
+      tags$p(tags$b("Borders: "), "GADM 4.1 (", tags$a(href = "https://gadm.org", target = "_blank", "gadm.org", .noWS = "outside"), ")."),
+      tags$p(tags$b("Limitations: "), "maps show where development is thermally possible. No upper temperature ",
+             "threshold, mortality, winter survival, host availability or microclimate (e.g. bark or soil temperature). ",
+             "Not validated against Norwegian observations. For species rows describing only part of the life cycle ",
+             "(e.g. overwintered larvae to adult), use the emergence date; the generation count assumes a full life cycle."),
+      tags$p(class = "small text-muted", "Source code: ",
+             tags$a(href = "https://github.com/floedaniel/dd_maps_norway", target = "_blank", "github.com/floedaniel/dd_maps_norway"),
+             " (GPL-3).")))
+  ))),
+  vkm_footer("DD-maps Norway")
 )
 
 # ------------------------------------------------------------------------------------ server
@@ -150,7 +214,7 @@ server <- function(input, output, session) {
   species <- reactive(sp_params(sp_df()))
   sets_tick <- reactiveVal(0)                                     # bump to refresh the Maps set list
   output$sptable <- renderTable(species_tbl(sp_df()), sanitize.text.function = identity, striped = TRUE,
-                                hover = TRUE, spacing = "s", width = "100%", align = "lllrrlrrll")
+                                hover = TRUE, spacing = "s", width = "100%", align = "lllrrlrrl")
   observe({
     s <- sp_df(); u <- s$species[s$source == "user"]
     updateSelectInput(session, "cp_species", choices = s$species, selected = isolate(input$cp_species) %||% u[length(u)])
@@ -229,6 +293,11 @@ server <- function(input, output, session) {
 
   layer <- reactive({
     req(input$set, input$year, input$var, input$month); d <- file.path(outd, input$set)
+    if (input$view %in% c("p1", "p2")) {                 # probability maps (precomputed, values 0-1)
+      fp <- set_prob(input$set, if (input$view == "p1") 1 else 2)
+      validate(need(!is.na(fp), "No probability maps for this set yet (needs 1991-2020; run opram_probability())."))
+      return(rast(fp)[[input$month]] * 100)
+    }
     fy <- file.path(d, sprintf("%s_%s_%s.tif", input$set, input$year, input$var))
     validate(need(file.exists(fy), sprintf("No %s results for %s yet.", input$year, set_label(input$set, sp_df()$species))))
     f <- function(tag) rast(file.path(d, sprintf("%s_%s.tif", tag, input$var)))[[input$month]]
@@ -241,17 +310,31 @@ server <- function(input, output, session) {
     v <- values(r, mat = FALSE)[ncell_nor]
     rbind(data.frame(x = xy_nor[, 1], y = xy_nor[, 2], v = v), pad_nor)
   })
-  output$maptitle <- renderText(sprintf("%s – %s – %s, development from 1 %s", set_label(input$set, sp_df()$species),
-    c(emerge = "adult emergence", ngen = "generations")[input$var],
-    c(year = input$year, normal = "30-yr median", anom = paste(input$year, "anomaly"))[input$view],
-    month.name[match(sub("start_", "", input$month), month.abb)]))
+  output$maptitle <- renderText({
+    mon <- month.name[match(sub("start_", "", input$month), month.abb)]
+    if (input$view %in% c("p1", "p2")) {
+      fp <- set_prob(input$set, if (input$view == "p1") 1 else 2)
+      return(sprintf("%s – probability of %s generation%s within the year (%s), development from 1 %s",
+                     set_label(input$set, sp_df()$species), if (input$view == "p1") "≥1" else "≥2",
+                     if (input$view == "p1") "" else "s", if (is.na(fp)) "n/a" else prob_period(fp), mon))
+    }
+    sprintf("%s – %s – %s, development from 1 %s", set_label(input$set, sp_df()$species),
+      c(emerge = "adult emergence", ngen = "generations")[input$var],
+      c(year = input$year, normal = "30-yr median", anom = paste(input$year, "anomaly"))[input$view], mon)
+  })
   output$map <- renderPlot({
-    df <- mapdf(); em <- input$var == "emerge"; an <- input$view == "anom"
+    df <- mapdf(); em <- input$var == "emerge"; an <- input$view == "anom"; pr <- input$view %in% c("p1", "p2")
     na <- "transparent"
-    sc <- if (an) scale_fill_viridis_c(option = "cividis", na.value = na, name = if (em) "Days vs\nmedian" else "Generations\nvs median")
-          else if (em) scale_fill_viridis_c(option = "magma", direction = -1, na.value = na, name = "Emergence",
+    # viridis everywhere; yellow = more pest pressure (earlier emergence / more generations / higher probability)
+    pmax_ <- if (pr) max(10, ceiling(round(max(df$v, na.rm = TRUE), 3) / 10) * 10) else 100   # stretch low probabilities (float32-safe)
+    sc <- if (pr) scale_fill_viridis_c(option = "viridis", limits = c(0, pmax_), na.value = na,
+                                       labels = function(v) paste0(v, "%"),
+                                       name = if (input$view == "p1") "Years with\n≥1 generation" else "Years with\n≥2 generations")
+          else if (an) scale_fill_viridis_c(option = "viridis", direction = if (em) -1 else 1, na.value = na,
+                                       name = if (em) "Days vs\nmedian" else "Generations\nvs median")
+          else if (em) scale_fill_viridis_c(option = "viridis", direction = -1, na.value = na, name = "Emergence",
                                             labels = if (input$view == "year") day_lab(as.integer(input$year)) else function(v) paste("day", v))
-          else scale_fill_viridis_c(name = "Generations", na.value = na)
+          else scale_fill_viridis_c(option = "viridis", name = "Generations", na.value = na)
     xy <- xyFromCell(tmpl, cell())
     ggplot(df, aes(x, y)) +
       geom_raster(data = base_nor, aes(alpha = a), fill = "grey80") + scale_alpha_identity() +
@@ -280,6 +363,8 @@ server <- function(input, output, session) {
     nt <- set_normal(input$set)
     if (!is.na(nt)) { en <- unlist(rast(file.path(d, paste0(nt, "_emerge.tif")))[cell()])
       out[["Δd"]] <- ifelse(is.na(e - en), "–", sprintf("%+.0f", e - en)) }
+    fp <- set_prob(input$set, 1)
+    if (!is.na(fp)) out[["P≥1"]] <- sprintf("%.0f%%", 100 * unlist(rast(fp)[cell()]))
     out
   }, striped = TRUE, spacing = "xs", width = "100%")
 
@@ -292,7 +377,11 @@ server <- function(input, output, session) {
     if (!is.null(p$diapause_temperature)) updateNumericInput(session, "diat", value = p$diapause_temperature) })
   observeEvent(input$maxY, { y <- sim_years(input$maxY); updateSelectInput(session, "pyear", choices = y, selected = tail(y, 1)) })
 
-  prun <- eventReactive(input$go, {
+  # run once automatically when the year list is ready (Oslo, preset species), then on "Run model"
+  auto_run <- reactiveVal(0)
+  observeEvent(input$pyear, if (auto_run() == 0 && nzchar(input$pyear)) auto_run(1), ignoreInit = TRUE)
+  prun <- eventReactive(list(input$go, auto_run()), {
+    req(auto_run() > 0 || input$go > 0)
     req(input$pyear); c1 <- cellFromXY(tmpl, xy_of(input$lon, input$lat)); i <- landmap[c1]
     validate(need(!is.na(i), "Location is outside Norway's land cells."))
     p <- opram_params(input$T0, input$thr, if (input$dia) input$dial, if (input$dia && input$diat_on) input$diat,

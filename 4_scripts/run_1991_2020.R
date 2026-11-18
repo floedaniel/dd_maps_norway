@@ -21,6 +21,6 @@ opram_norway(years, sp, workers = 14, block_cells = 5000)   # ~1.5 GB RAM per wo
 say("model done: ", round(difftime(Sys.time(), t1, units = "mins"), 1), " min")
 
 t2 <- Sys.time()
-for (s in sp) opram_normals(s$name, years, s$maxYears)
+for (s in sp) { opram_normals(s$name, years, s$maxYears); opram_probability(s$name, years) }
 say("normals done: ", round(difftime(Sys.time(), t2, units = "mins"), 1), " min; total ",
     round(difftime(Sys.time(), t0, units = "mins"), 1), " min")

@@ -78,10 +78,21 @@ sn_grid <- function(out = sn_out, file = sn_files[["tn"]]) {
   saveRDS(gr, fr); gr
 }
 
+# yearly THREDDS files (tn+tx+tg+rr, one version; see download_senorge.R) take precedence over the
+# long single-variable files when present for that year
+sn_archive_dir <- Sys.getenv("SENORGE_ARCHIVE_DIR", "1_raw_data/senorge_archive")
+sn_source <- function(v, y, files = sn_files) {          # local archive first, then the OneDrive copy
+  a <- file.path(c(sn_archive_dir, Sys.getenv("ARCHIVE_DEST", "")), sprintf("seNorge2018_%d.nc", y))
+  a <- a[file.exists(a)]
+  if (length(a)) a[1] else files[[v]]
+}
+
 # read one year of one variable -> matrix [land cells x days]
-sn_read_year <- function(file, year, land) {
+sn_read_year <- function(file, year, land, v = NULL) {
   nc <- nc_open(file); on.exit(nc_close(nc))
-  v <- sn_var(nc); d <- sn_dates(nc); i <- which(as.integer(format(d, "%Y")) == year)
+  if (is.null(v)) v <- sn_var(nc)[1]
+  if (!v %in% names(nc$var)) stop(v, " not in ", basename(file))
+  d <- sn_dates(nc); i <- which(as.integer(format(d, "%Y")) == year)
   if (!length(i)) stop(sprintf("%d not in %s (%s..%s)", year, basename(file), min(d), max(d)))
   stopifnot(length(i) == ndays(year), all(diff(i) == 1))
   m <- matrix(NA_real_, length(land), length(i))
@@ -139,7 +150,7 @@ sn_extract_year <- function(year, vars = c("tn", "tx"), files = sn_files, out = 
     fb <- sn_bin_file(v, year, out); ft <- file.path(out, v, sprintf("%s_%d.tif", v, year))
     need_b <- overwrite || !file.exists(fb); need_t <- tif && (overwrite || !file.exists(ft))
     if (!need_b && !need_t) next
-    m <-tryCatch(sn_read_year(files[[v]], year, gr$land), error = function(e) { warning(conditionMessage(e)); NULL })
+    m <-tryCatch(sn_read_year(sn_source(v, year, files), year, gr$land, v), error = function(e) { warning(conditionMessage(e)); NULL })
     if (is.null(m)) next
     if (need_b) sn_write_bin(m, fb)
     if (need_t) { dir.create(dirname(ft), FALSE, TRUE); sn_write_tif(m, gr, ft) }

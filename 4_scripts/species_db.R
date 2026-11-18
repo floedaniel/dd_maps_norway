@@ -36,7 +36,10 @@ sp_validate <- function(r, all) {
   if (sp_slug(r$species) %in% sp_slug(all$species)) p <- c(p, "A species with this name already exists.")
   if (!is.finite(r$baseline_temperature) || r$baseline_temperature < -10 || r$baseline_temperature > 40)
     p <- c(p, "T0 must be between -10 and 40 °C.")
-  if (!is.finite(r$threshold) || r$threshold <= 0 || r$threshold > 20000) p <- c(p, "Threshold must be > 0 (degree-days).")
+  if (!is.finite(r$threshold) || r$threshold <= 0 || r$threshold > 20000) p <- c(p, "Degree-days required must be > 0.")
+  else if (r$threshold < 40) p <- c(p, paste0("Degree-days required = ", r$threshold, " looks like a temperature. ",
+    "Enter the degree-day SUM to complete development (OPRAM species: 61-1131 DD), ",
+    "not the upper temperature threshold."))
   if (!is.na(r$diapause_daylength) && (r$diapause_daylength < 0 || r$diapause_daylength > 24))
     p <- c(p, "Diapause daylength must be 0-24 h.")
   if (!is.na(r$diapause_temperature) && is.na(r$diapause_daylength))

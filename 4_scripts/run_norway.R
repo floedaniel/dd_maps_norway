@@ -17,7 +17,7 @@ source("4_scripts/extract_senorge.R")            # sn_read_bin(), ndays(), sn_bi
 
 sn_proc   <- "2_processed_data/senorge"
 opram_out <- "5_outputs/opram"
-last_meteo <- 2021L                              # last year with both TN and TX (TX ends 2021)
+last_meteo <- 2025L                              # last full year (seNorge v23.09 yearly files)
 
 slug <- function(x) gsub("[^a-z0-9]+", "_", tolower(trimws(x)))
 set_name <- function(p) slug(if (is.na(p$name)) sprintf("T%s_DD%s", p$T0, p$threshold) else p$name)
@@ -73,6 +73,16 @@ opram_norway <- function(years, params, workers = 10, block_cells = 10000, overw
   if (!is.null(params$T0)) params <- list(params)
   gr <- readRDS(file.path(sn_proc, "grid.rds")); nms <- vapply(params, set_name, "")
   if (anyDuplicated(nms)) stop("duplicate parameter-set names: ", paste(nms[duplicated(nms)], collapse = ", "))
+  # parameters changed since the maps were made (e.g. a corrected user species)? -> drop old maps, redo all
+  key <- function(p) p[c("T0", "threshold", "diapause_daylength", "diapause_temperature", "method", "maxYears")]
+  for (j in seq_along(params)) {
+    pf <- file.path(opram_out, nms[j], "params.rds")
+    if (file.exists(pf) && !identical(key(readRDS(pf)), key(params[[j]]))) {
+      old <- list.files(file.path(opram_out, nms[j]), "\\.tif$", full.names = TRUE)
+      message(sprintf("%s: parameters changed -> removing %d old map files and recomputing", nms[j], length(old)))
+      unlink(c(old, pf))
+    }
+  }
   todo <- lapply(nms, function(nm) years[overwrite | !file.exists(out_file(nm, years, "emerge")) |
                                            !file.exists(out_file(nm, years, "ngen"))])
   if (!any(lengths(todo))) { message("all outputs exist"); return(invisible(NULL)) }
@@ -93,7 +103,7 @@ opram_norway <- function(years, params, workers = 10, block_cells = 10000, overw
     future.seed = TRUE, future.packages = "matrixStats")
   t1 <- Sys.time(); message(sprintf("model: %.1f min", difftime(t1, t0, units = "mins")))
   j <- which(lengths(todo) > 0)
-  plan(multisession, workers = min(workers, 6L, length(j)))         # assembly: ~3 GB RAM per set
+  plan(multisession, workers = min(workers, 4L, length(j)))         # assembly: ~5 GB RAM per set (32 yrs); 6 workers starved a 63 GB machine
   future_lapply(j, function(jj) assemble_set(nms[jj], todo[[jj]], length(blocks), gr, tmp, params[[jj]]),
                 future.seed = TRUE, future.packages = "terra")
   message(sprintf("write GeoTIFFs: %.1f min", difftime(Sys.time(), t1, units = "mins")))
@@ -118,6 +128,24 @@ opram_normals <- function(name, years = 1991:2020, maxYears = 4L) {
   invisible(tag)
 }
 
+# probability maps: share of years in which >= k generations complete within the year, per start month.
+# For k = 1 this equals P(first adults emerge within the same year) -> also valid for "emergence only" rows.
+# Writes <name>_prob_<y1>_<y2>_ngen_ge<k>.tif (FLT4S, 12 layers, values 0-1).
+opram_probability <- function(name, years = 1991:2020, k = c(1, 2)) {
+  nm <- slug(name); f <- out_file(nm, years, "ngen")
+  if (any(miss <- !file.exists(f))) stop(nm, ": missing ", sum(miss), " year files for ", min(years), "-", max(years))
+  for (kk in k) {
+    p <- rast(lapply(1:12, function(m) {
+      s <- rast(lapply(f, function(x) rast(x)[[m]]))
+      sum(s >= kk - 1e-9) / length(f)                  # ngen is float32; tolerance for exactly k
+    }))
+    names(p) <- paste0("start_", month.abb)
+    writeRaster(p, file.path(opram_out, nm, sprintf("%s_prob_%d_%d_ngen_ge%d.tif", nm, min(years), max(years), kk)),
+                overwrite = TRUE, datatype = "FLT4S", gdal = "COMPRESS=DEFLATE")
+  }
+  invisible(nm)
+}
+
 # compute one species from the species table (OPRAM presets + 3_metadata/species_parameters_user.csv);
 # used by the app's "Compute" button (runs in a background R process via callr).
 opram_compute_species <- function(name, years, workers = 6L, block_cells = 5000L) {
@@ -127,7 +155,10 @@ opram_compute_species <- function(name, years, workers = 6L, block_cells = 5000L
   p <- sp_params(df)[[1]]
   message(sprintf("STAGE model %s %d-%d", name, min(years), max(years)))
   opram_norway(years, p, workers = workers, block_cells = block_cells)
-  if (all(1991:2020 %in% years)) { message("STAGE normals"); opram_normals(name, 1991:2020, p$maxYears) }
+  if (all(1991:2020 %in% years)) {
+    message("STAGE normals"); opram_normals(name, 1991:2020, p$maxYears)
+    message("STAGE probability"); opram_probability(name, 1991:2020)
+  }
   message("STAGE done")
   invisible(set_name(p))
 }

@@ -13,7 +13,15 @@ test_that("maps and point model render", {
     session$setInputs(map_click = list(x = 262000, y = 6650000))                 # near Oslo
     expect_match(output$cellinfo, "Gen")
     session$setInputs(var = "ngen", view = "normal")
-    expect_error(layer())                                                        # no normal yet -> validate()
+    expect_gt(sum(!is.na(mapdf()$v)), 1e5)                                       # 30-yr median available
+    session$setInputs(view = "p1")                                               # probability maps (0-100 %)
+    v <- mapdf()$v; expect_true(all(v >= 0 & v <= 100, na.rm = TRUE)); expect_gt(max(v, na.rm = TRUE), 50)
+    expect_match(output$maptitle, "probability of ≥1 generation")
+    expect_match(output$cellinfo, "P≥1")
+    session$setInputs(view = "p2"); expect_match(output$map$src, "^data:image/png")
+    session$setInputs(set = "test_t10_dd300", view = "p1")
+    expect_error(layer(), "No probability maps")                                 # set without 1991-2020
+    session$setInputs(set = "ips_typographus", view = "year")
     session$setInputs(preset = "Ips typographus", T0 = 8.3, thr = 557, dia = TRUE, dial = 14.5, diat_on = TRUE,
                       diat = 14.5, method = "sine", maxY = 4, pyear = "2010", pmonth = "1", lat = 59.91, lon = 10.75, go = 1)
     z <- prun()
